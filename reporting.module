@@ -1,0 +1,823 @@
+<?php
+global $base_path;
+//error_reporting(E_ALL & ~E_NOTICE);
+/**
+ * Implements reporting_help.
+ *
+ * Displays help and module information.
+ *
+ * @param path 
+ *   Which path of the site we're using to display help
+ * @param arg 
+ *   Array that holds the current path as returned from arg() function
+ */
+function reporting_help($path, $arg) {
+  switch ($path) {
+    case "admin/help#reporting":
+      return '<p>'.  t("This is the Reporting module designed for Drupal reporting.") .'</p>';
+      break;
+  }
+} 
+
+/**
+ * Implements hook_menu().
+ */
+function reporting_menu() {
+  //$items = array();  
+  $items['admin/reports/reporting'] = array(
+    'title' => 'Reporting kpa',
+    'description' => "Full reporting system.",
+    'page callback' => 'reporting_mainpage',
+    'page arguments' => array('reporting_mainpage'),
+    'access arguments' => array('reporting'),
+   	);
+   	
+  $items['admin/reports/reporting/all'] = array(
+    'title' => 'Overall Stats',
+    'description' => "Overall report of the users stats.",
+    'page callback' => 'reporting_all',
+    'access arguments' => array('reporting'),
+   	);
+   	
+  $items['admin/reports/reporting/advreport'] = array(
+    'title' => 'Selection Report',
+    'description' => "Advance Cross Selection Report",
+    'page callback' => 'reporting_cross_selection',
+    'access arguments' => array('reporting'),
+   	);
+   	
+   $items['admin/reports/reporting/timereport'] = array(
+    'title' => 'Time Report',
+    'description' => "Across Time Report",
+    'page callback' => 'reporting_time',
+    'access arguments' => array('reporting'),
+   	);
+
+  $items['admin/config/reporting/settings'] = array(
+    'title' => 'Reporting settings',
+    'description' => 'Configure relevance settings for reporting.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('reporting_admin_settings'),
+    'access arguments' => array('administer reporting'),
+	  'file' => 'reporting.admin.inc',
+  );
+
+  return $items;
+}  
+
+/**
+ * Set restricted Permissions.
+ */
+function reporting_permission() {
+  return array(
+    'reporting' => array(
+      'title' => t('Administer my module'), 
+      'description' => t('Perform administration tasks for my module.'),
+    ),
+  );
+}
+
+function reporting_admin() {
+  $form = array();
+  $form['reporting_maxdisp'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Maximum number of links'),
+    '#default_value' => variable_get('reporting_maxdisp', 3),
+    '#size' => 2,
+    '#maxlength' => 2,
+    '#description' => t("The maximum number of links to display in the block."),
+    '#required' => TRUE,
+  );
+  return system_settings_form($form);
+}
+
+/**
+ * hook_main
+ */
+function reporting_mainpage(){
+	$str = "This is the main reporting page. More info Coming soon :)";
+	return $str;
+}
+
+
+/**
+ * hook_all
+ * Full chart and reporting page
+ */
+function reporting_all(){
+	// This is where we specify the fields
+	$display = "";	//$display is our main text to be returned. 
+	$results = reporting_get_table_fields();
+
+	//Specify the chart type (You can always change this, just look at
+	//google charts API
+	$chart_type = "PieChart";
+	
+	$test = 5;
+	
+	/* Adding the google charts JS library */
+	drupal_add_js('https://www.google.com/jsapi', 'external');
+
+	$user_array = array();
+	foreach ($results as $key => $value){
+	  array_push($user_array, array($value));   
+	}
+
+	$display .= "Number of profile fields: " . count($user_array) . "<br/>";
+  $display .= reporting_draw_table('Reporting',$user_array);
+
+	$display .= "<br/><br/>";
+
+	//This is for the google trend
+	$display .= google_trend("parto","&date=ytd");
+	return $display;
+}
+
+
+/**
+ * hook_cross_selection
+ */
+function reporting_cross_selection(){
+	//Get the form
+	$form = drupal_get_form('reporting_form');
+	return $form;
+}
+
+
+
+/**
+ * hook_time
+ * Searches the user info based on a specific time.
+ */
+function reporting_time(){
+	//Get the form
+	$form = drupal_get_form('reporting_time_form');
+	return $form;
+}
+
+
+/**
+ * hook_time_form
+ * This is the form for the time report
+ */
+function reporting_time_form($form, &$form_state){
+	$form['timeform']['date'] = array(
+		'#title' => t('Please enter a date:'),
+		'#type' => 'textfield',
+		'#default_value' => 'March 15 2012',
+		'#required' => TRUE,
+		'#description' => t('Please Enter a date to generate a full report based on the date.'),
+	);
+	$form['timeform']['submit'] = array(
+		'#type' => 'submit',
+		'#value' => 'Generate',
+		'#submit' => array('reporting_time_report')
+	);
+	return $form;
+
+}
+
+/**
+ * hook_time_report
+ * This is the calculation for the Time report page
+ */
+function reporting_time_report($form, &$form_state){
+  	
+	drupal_set_message('Selected Date: '. $form_state['values']['date']);
+	//Create a timestamp
+	$time = strtotime($form_state['values']['date']);
+	$numusers = reporting_db_search("users","uid","created",$time,'<');
+	//print " || " . count($numusers) . " || ";
+	drupal_set_message('Number of Users Selected: '. count($numusers));
+	
+	$total_info = array();
+	//This is the total number 
+	$total_targeted_users = array();
+	//Loop through all the users to find the specific fields within them :)
+	
+	//This loops the users based on the time we entered.
+	//$numusers is a list array with key and values
+		
+	$user_fields = reporting_get_fields();
+	foreach ($numusers as $user => $uid){
+		//Call the fields function to get all the available drupal fields
+		
+		//Save the uid
+		array_push($total_targeted_users,$uid->uid);
+		
+		foreach ($user_fields as $key => $value){
+			
+			//set $field to field name
+			$field = $value->field_name;
+			//calculate the column name
+			$colname = $field . "_value";
+			//calculate the table name
+			$table = "field_data_" . $field;
+			//This will save all the fields data base on user into an array
+			$data = get_field_query($table,$colname,$uid->uid);
+			//This checks if the field has anything for that user
+			if ($data){
+				//Loop for the data within the use, within the field, and within the
+				//Field name… Eg. male, female, bachelors...
+				foreach($data as $cols){
+					if(isset($total_info[$value->field_name][$cols->$colname])){
+						$total_info[$value->field_name][$cols->$colname]++;
+					}
+					else{
+						$total_info[$value->field_name][$cols->$colname] =1;
+					}
+				}
+			}
+    	}
+	}
+	
+	$str = "";
+	foreach ($total_info as $profile_field => $values) {
+		$str .= "<strong>" . $profile_field . "</strong><br/>";
+		foreach ($values as $key => $value){
+    		if($key != ""){
+	    		$str .= "<span>" . $key . ": </span>";
+	    		$str .= "<span>" . $value ."</span><br/>";
+	    	}
+    	}
+    	$str .= "<br/><br/>";
+	}
+	
+	drupal_set_message($str);
+}
+
+/**
+ * hook_field_query
+ * This function will do a simple database search based on the field that we are
+ * looking for. it will save the user's field data in to an array and will return
+ * that array with the name $result as the final value.
+ * this function is universal for the reporting module as we will mostly use it for
+ * queries based on time and cross-field-selection.
+ */
+function reporting_field_query($uid,$table,$column){
+	$query = db_select($table,'n')
+	->fields('n',array($column))
+	->condition('entity_id',$uid)
+	->execute();
+	$result = $query->fetchAll();
+	
+	return $result;
+}
+
+function reporting_db_search($table,$column,$field,$value,$condition){
+	$query = db_select($table,'n')
+	->fields('n',array($column))
+	->condition($field,$value,$condition)
+	->execute();
+	$result = $query->fetchAll();
+	
+	
+	return $result;
+}
+
+function reporting_get_fields(){
+	$query = db_select('field_config', 'n')
+	->fields('n', array('field_name'))
+	->condition('type',array('text','list_text'))
+	->execute();
+	$fields = $query->fetchAll();
+	//This will return an array with all the user fields listed in there.
+	return $fields;
+}
+
+function reporting_get_table_fields(){
+	$user_fields = db_select('users', 'u');
+	$user_fields->fields('u', array('uid','name','mail'));
+	// Joins any tables selected from config with uid from users table
+	foreach (array_filter(variable_get('reporting_js', array())) as $t){
+		$user_fields->leftJoin('field_data_' . $t, $t, $t .'.entity_id = u.uid');
+		$user_fields->fields($t, array($t . '_value'));
+	}
+	$results = $user_fields->execute();
+
+	// Returns array with user uid,name,mail, and any field values selected
+	return $results;
+}
+
+
+function gender_query ($uid) {
+	return reporting_db_search("field_data_field_gender","field_gender_value","entity_id",$uid,'=');
+	//@mysql_select_db("khorshid_drupal") or die( "Unable to select database");
+	//return mysql_result(mysql_query("SELECT value FROM profile_values WHERE fid = 15 and uid = " . $uid),0);
+}
+
+function get_field_query($fieldtable,$fieldvalue,$uid) {
+	return reporting_db_search($fieldtable,$fieldvalue,"entity_id",$uid,'=');
+}
+
+function reporting_user_across_time($form, &$form_state){
+	//$form_state['redirect'] = 'admin/reports/reporting/report';
+	$form_state['rebuild'] = TRUE;
+  	// Store values that will be available when we return to the definition.
+  	$form_state['storage']['values'] = $form_state['values']['date'];
+  	
+  	
+	drupal_set_message('Selected Date: '. $form_state['values']['date']);
+	$time = strtotime($form_state['values']['date']);
+	$numusers = reporting_db_search("users","uid","created",$time,'<');
+	//print " || " . count($numusers) . " || ";
+	drupal_set_message('Total Users Selected Based on Date: '. count($numusers));
+	
+	$total_info = array();
+	//This is the total number 
+	$total_targeted_users = array();
+	//Loop through all the users to find the specific fields within them :)
+	
+	//This loops the users based on the time we entered.
+	//$numusers is a list array with key and values
+	foreach ($numusers as $user => $uid){
+		//Call the fields function to get all the available drupal fields
+		$user_fields = reporting_get_fields();
+		
+		//Save the uid
+		array_push($total_targeted_users,$user);
+		
+		foreach ($user_fields as $key => $value){
+			//set $field to field name
+			$field = $value->field_name;
+			//calculate the column name
+			$colname = $field . "_value";
+			//calculate the table name
+			$table = "field_data_" . $field;
+			//This will save all the fields data base on user into an array
+			$data = get_field_query($table,$colname,$user);
+			
+			//This checks if the field has anything for that user
+			if ($data){
+				//Loop for the data within the use, within the field, and within the
+				//Field name… Eg. male, female, bachelors...
+				foreach($data as $cols){
+					if(isset($total_info[$value->field_name][$cols->$colname])){
+						$total_info[$value->field_name][$cols->$colname]++;
+					}
+					else{
+						$total_info[$value->field_name][$cols->$colname] =1;
+					}
+					//print count($total_info);
+					//print "<br/>" . $cols->$colname;
+				}
+			}
+    	}
+	}	
+	/**
+	 * This is the main part where we store the selected text fields into a 
+	 * dictionary (array).
+	 */
+	$arrayfilter = array();
+	foreach ($total_info as $profile_field => $values) {
+		if(isset($form_state['values']['field'. $profile_field])){
+			$form_state['storage']['field'. $profile_field] = $form_state['values']['field'. $profile_field];
+			//drupal_set_message($form_state['storage']['field'. $profile_field]);
+		}
+		foreach ($values as $key => $value){
+			//we need to make sure there is WHITE spaces in the $key
+    		//So make a temporary string
+    		$key_striped = preg_replace('/\s+/','-',$key);
+    		
+    		if($key != ""){
+    			if(isset($form_state['values']['filed-under'. $key_striped])){
+		    		$form_state['storage']['filed-under'. $key_striped] = $form_state['values']['filed-under'. $key_striped];
+		    		//drupal_set_message($form_state['storage']['filed-under'. $key_striped]);
+		    		//array_push($arrayfilter,$profile_field,$key);
+		    		//$arrayfilter[$profile_field] = $key;
+		    		if($form_state['values']['filed-under'. $key_striped]==1){
+    					//$arrayfilter[$profile_field] = $key;
+    					//print "<br/>".$key."<br/>";
+    					$temp = array($profile_field => $key);
+    					//print_r($temp);
+    					//print "<br/>";
+    					$counter = 0;
+    					if(isset($temp[$profile_field])){
+    						$arrayfilter = array_merge((array)$arrayfilter, (array)$temp);
+    					}
+    				}
+	    		}
+	    	}
+    	}
+	}
+	
+	//You have picked - FIXED BELOW
+	//print_r($arrayfilter);
+	if(count($arrayfilter) > 0){
+		drupal_set_message('---------------------------------------------------------------------------------------------------------');
+	}
+	//Show the fields selected
+	foreach ($arrayfilter as $profile_field => $values2) {
+		drupal_set_message('You Picked: ' . $profile_field . ': ' . $values2);
+	}
+	
+	if(count($arrayfilter) > 0){
+		drupal_set_message('---------------------------------------------------------------------------------------------------------');
+	}
+	
+	
+	if(count($arrayfilter) > 0){
+		$arcounter = 0;
+		$table = "";
+		$colomn = "";
+		//This is to generate characters for our database select.
+		//STARTING FROM 'b'
+		$char = 98;
+		//Loop the array of filters that we give to the program
+		foreach($arrayfilter as $key => $value){
+			//declare the table name
+			$table = "field_data_" . $key;
+			//declare the column name
+			$colomn = $key . "_value";
+			//For the first element make sure out drupal database select is syntexed correctly
+			if($arcounter == 0){
+				$queryy = db_select($table, 'a');
+				$queryy->condition('a.'.$colomn,$value,'=');
+				$arcounter++;
+			}
+			//after the first filter value
+			else{
+				if($value != ""){
+					print $value . "<br/>";
+					$queryy->join($table,chr($char), 'a.entity_id = '.chr($char).'.entity_id');
+					$queryy->condition(chr($char).'.'.$colomn,$value,'=');
+					
+					if($char == 122){
+						$char = 65;
+					}
+					else{
+						$char++;
+					}
+				}
+			}
+		}
+		//We need to make sure we include the time in the database query
+		$char++;
+		$queryy->join('users',chr($char),'a.entity_id = '.chr($char).'.uid');
+		$queryy->condition(chr($char).'.created',$time,'<');
+		
+		$queryy->fields('a',array('entity_id'));
+		
+		$final = $queryy->execute();
+		
+		//Counter for the users with the selected features
+		$usercounter = 0;
+		
+		while($recordss = $final->fetchAssoc()) {
+	       	//**********************Print the fields
+	       	//print_r($recordss);
+	    	foreach ($recordss as $profile_field2 => $values3) {
+	    		//Give a link to the user's profile in drupal
+				drupal_set_message('<a href="'.$GLOBALS['base_path'].'user/' . $values3 . '" target="_blank">User #'.$values3.'</a>');
+			}
+	       
+	       $usercounter++;
+	       //drupal_set_message($recordss);
+	    }
+	    if(count($arrayfilter) > 0){
+	    drupal_set_message('---------------------------------------------------------------------------------------------------------');
+		}
+		if($usercounter > 0){
+			drupal_set_message('Total users with selected characteristics: ' . $usercounter);
+		}
+    }
+    
+}
+
+function reporting_selection_final($form, &$form_state){
+	return $form_state['storage']['values'];	
+}
+
+function reporting_test(){
+	drupal_set_message("THIS IS ME :D");
+	$str = "?";
+	
+	
+	return $str;
+
+}
+
+function reporting_form($form, &$form_state){
+	$form['reportform']['date'] = array(
+		'#title' => t('Please enter a date:'),
+		'#type' => 'textfield',
+		'#default_value' => 'may 20 2010',
+		'#required' => TRUE,
+		'#description' => t('just a test'),
+	);
+	$form['sample']['submit'] = array(
+		'#type' => 'submit',
+		'#value' => 'Submit',
+		'#submit' => array('reporting_user_across_time')
+	);
+	
+	if(isset($form_state['storage']['values'])){
+	
+		$time = strtotime($form_state['storage']['values']);
+
+		$numusers = reporting_db_search("users","uid","created",$time,'<');
+		$total_info = array();
+		//This is the total number 
+		$total_targeted_users = array();
+		//Loop through all the users to find the specific fields within them :)
+		//This loops the users based on the time we entered.
+		//$numusers is a list array with key and values
+		foreach ($numusers as $user => $uid){
+			//Call the fields function to get all the available drupal fields
+			$user_fields = reporting_get_fields();
+			//Save the uid
+			array_push($total_targeted_users,$user);
+		
+			foreach ($user_fields as $key => $value){
+				//set $field to field name
+				$field = $value->field_name;
+				//calculate the column name
+				$colname = $field . "_value";
+				//calculate the table name
+				$table = "field_data_" . $field;
+				//This will save all the fields data base on user into an array
+				$data = get_field_query($table,$colname,$user);
+				
+				//This checks if the field has anything for that user
+				if ($data){
+					//Loop for the data within the use, within the field, and within the
+					//Field name… Eg. male, female, bachelors...
+					foreach($data as $cols){
+						if(isset($total_info[$value->field_name][$cols->$colname])){
+							$total_info[$value->field_name][$cols->$colname]++;
+						}
+						else{
+							$total_info[$value->field_name][$cols->$colname] =1;
+						}
+						//print count($total_info);
+						//print "<br/>" . $cols->$colname;
+					}
+				}
+    		}
+		}
+		//print_r($total_info);
+		//print "<br/><br/><br/>";
+		//print_r($total_targeted_users);
+
+
+		//******************* PRINTING THE FIELDS
+		//reporting_print_fields_and_values($total_info);
+  		
+  		//This is where we are adding the extra form fields based on the first step
+  		foreach ($total_info as $profile_field => $values){
+  			$form['reportform']['field'. $profile_field] = array(
+			'#title' => t($profile_field),
+			'#type' => 'textfield',
+			'#default_value' => $profile_field,
+			'#required' => FALSE,
+			'#disabled' => TRUE,
+			);
+			foreach ($values as $key => $value){
+    			if($key != ""){
+    				//we need to make sure there is WHITE spaces in the $key
+    				//So make a temporary string
+    				$key_striped = preg_replace('/\s+/','-',$key);
+    				
+	    			$form['reportform']['filed-under'.$key_striped] = array(
+					'#title' => t($key_striped),
+					'#type' => 'checkbox',
+					'#default_value' => $key_striped,
+					'#required' => FALSE,
+					);
+	    		}
+    		}
+    		
+  		}
+  		
+  		
+  	}
+
+	return $form;
+}
+
+function sample_form_submit($form, &$form_state){
+  //drupal_set_message($form_state['values']['color']);
+  
+  // Trigger multistep.
+  $form_state['rebuild'] = TRUE;
+  // Store values that will be available when we return to the definition.
+  $form_state['storage']['values'] = $form_state['values']['date'];
+}
+
+function reporting_print_fields_and_values($dictionary){
+	$str = "";
+	foreach ($dictionary as $profile_field => $values) {
+		$str .= "<string>" . $profile_field . "</strong><br/>";
+		foreach ($values as $key => $value){
+    		if($key != ""){
+	    		$str .= $key . "<br/>";
+	    	}
+    	}
+    	$str .= "<br/><br/>";
+	}
+	
+	print $str;
+}
+
+/**
+ * hook_get_field_to_value
+ * This function is to calculate the Table name and column name of each
+ * field exist for the profiles. And then grab the different variables
+ * and finally return an array with the full data on an specific field! NEAT ;)
+ */
+function reporting_get_field_to_value($table){
+	//calculate the column name
+	$colname = $table . "_value";
+	//calculate the table name
+	$table = "field_data_" . $table;
+	
+	// Now a db query to get the variables grouped based on the field.
+	$query = db_select($table, 'n')
+	->fields('n', array($colname))
+	->groupBy($colname)
+	->execute();
+	// get them all into the $value variable.
+	$value = $query->fetchAll();
+	
+	return $value;
+}
+
+
+function reporting_select_database($table,$value){
+	$col = $table . "_value";
+	$table = "field_data_" . $table;
+	$query = db_select($table, 'n')
+	->condition($col, $value);
+    $count_query = $query->countQuery()->execute()->fetchField();
+	return $count_query;
+}
+
+
+/**
+ * This function is the main function which prints out the graph using Google Charts!
+ */
+function reporting_draw_graph($chart_type, $table,$data_array){
+	$table2 = $table . "_table";
+	$ff = array();
+	//echo count($data_array);
+	$output = '';
+	// So this is to see if the $data_array is actually contains any valuable information that is similar
+	// In some users in order to draw a chart for it!
+	if(count($data_array) > 0){  
+
+		$colname = $table . "_value";
+		$data = "
+	      google.load('visualization', '1.0', {'packages':['corechart','table']});
+	      google.setOnLoadCallback(drawChart);
+	
+	      function drawChart() {
+	      // Create the data table.
+	      var data = new google.visualization.DataTable();
+	      data.addColumn('string', '".$table."');
+	      data.addColumn('number', 'number');
+	      data.addRows([";
+	      
+	      foreach ($data_array as $key => $value){
+				$field = $value->$colname;
+	        	$data .= "['";
+	        	
+	        	if($field == ''){
+	        		$data .= "No-Data";
+	        	}
+	        	else{
+	        		$data .= $field;
+	        		array_push($ff,$field);
+	        	}
+	        	
+	        	$data .= "',".reporting_select_database($table,$field)."],";
+	      }
+	      
+	      $data .= "]);
+	        // Set chart options
+	        var options = {'title':'".$table.":',
+	                       'width':450,
+	                       'height':300,
+	                       is3D: false};
+	
+	        var chart = new google.visualization.".$chart_type."(document.getElementById('".$table."'));
+	        var secondChart = new google.visualization.Table(document.getElementById('".$table2."'));  
+	        chart.draw(data, options);
+	        secondChart.draw(data, options); 
+	      }
+		";
+		drupal_add_js($data, array('type' => 'inline', 'scope' => 'header', 'weight' => 5));
+		
+		$output .= '<div id="'.$table .'"></div><div id="'.$table2 .'"></div>';
+		
+		
+	
+	}
+	//print_r($ff);
+	
+	return $output;
+}
+
+
+/**
+ * Create a google trend image based on the passing variables
+ * $keyword = the word to search in google trend
+ * $variable = Url passed variable to customize the google trend graph.
+ */
+function google_trend($keyword,$variable){
+	$output = "";
+	$url = "";
+	$path = "http://www.google.com/trends/viz?q=";
+	$core_variable = "&graph=weekly_img&sa=N&geo=all";
+	
+	$url .= $path . $keyword . $core_variable . $variable;
+	$output .= '<img src="'.$url.'"/>';
+	
+	return $output;
+}
+
+function reporting_draw_table($table,$data_array){
+	$table2 = $table . "_table";
+	$ff = array();
+	$output = '';
+
+	if(count($data_array) > 0){  
+
+		$colname = $table;
+		$data = "
+	      google.load('visualization', '1.1', {'packages':['controls', 'corechart','table']});
+	      google.setOnLoadCallback(drawChart);
+	
+	      function drawChart() {
+		      // Create the data table.
+		      var data = new google.visualization.DataTable();";
+		      // Adds names of columns by looking at keys of first row
+					foreach ($data_array as $arr => $arr2){
+			      foreach ($arr2 as $keys => $values){
+		      		foreach ($values as $key => $value){
+		      			$data .= "data.addColumn('string', '" . $key . "');";
+		      		}
+			      }
+			      break;
+			    }
+
+			    // Adds cells to table
+      		foreach ($data_array as $arr => $arr2){ // $arr2 = array of rows
+			      foreach ($arr2 as $keys => $rows){
+		      		$data .= "data.addRow(['";
+		      		foreach ($rows as $key => $value){ 
+		      			reset($rows);
+		      			$data .= trim(preg_replace('/\s\s+|&nbsp;/', ' ', strip_tags(addslashes($value))));
+		      			end($rows);
+		      			if ($key !== key($rows)){
+		      				$data .=  "', '";
+		      			}
+		      		}
+				      $data .=  "']);"; 
+
+			      }
+			    }
+		     
+	      	$data .= "
+	        // Define a StringFilter control for the 'Email' column
+	        var stringFilterEmail = new google.visualization.ControlWrapper({
+	          'controlType': 'StringFilter',
+	          'containerId': 'filterName',
+	          'options': {
+	            'filterColumnLabel': 'name'
+	          }
+	        });
+					// Define a StringFilter control for the 'Name' column
+	        var stringFilterUser = new google.visualization.ControlWrapper({
+	          'controlType': 'StringFilter',
+	          'containerId': 'filterEmail',
+	          'options': {
+	            'filterColumnLabel': 'mail'
+	          }
+	        });
+	      
+	        // Define a table visualization
+	        var table = new google.visualization.ChartWrapper({
+	          'chartType': 'Table',
+	          'containerId': " .$table2 . ",
+	          'options': {'title':'".$table.":',
+	                       'width':1050,
+	                       'height':300,
+	                       is3D: false}
+	        });
+	      
+	        // Create the dashboard.
+	        var dashboard = new google.visualization.Dashboard(document.getElementById('dashboard')).
+	          // Configure the string filter to affect the table contents
+	          bind([stringFilterEmail,stringFilterUser], table).
+	          // Draw the dashboard
+	          draw(data);
+	      }
+		";
+		drupal_add_js($data, array('type' => 'inline', 'scope' => 'header', 'weight' => 5));
+
+		$output .= '<div id="dashboard"><div id="filterEmail"></div><div id="filterName"></div><div id="'.$table2 .'"></div></div>';
+	}
+	//print_r($ff);
+	
+	return $output;
+}
