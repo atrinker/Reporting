@@ -289,7 +289,7 @@ function reporting_get_table_fields(){
 	$user_fields = db_select('users', 'u');
 	$user_fields->fields('u', array('uid','name','mail'));
 	// Joins any tables selected from config with uid from users table
-	foreach (array_filter(variable_get('reporting_js', array())) as $t){
+	foreach (array_filter(variable_get('reporting', array())) as $t){
 		$user_fields->leftJoin('field_data_' . $t, $t, $t .'.entity_id = u.uid');
 		$user_fields->fields($t, array($t . '_value'));
 	}
@@ -299,6 +299,11 @@ function reporting_get_table_fields(){
 	return $results;
 }
 
+function reporting_get_chart_type($field){
+	$field = preg_replace('/_value/', '', $field);
+	$chart_type = variable_get('node-options-'.$field,"PieChart");
+	return $chart_type;
+}
 
 function gender_query ($uid) {
 	return reporting_db_search("field_data_field_gender","field_gender_value","entity_id",$uid,'=');
@@ -744,16 +749,20 @@ function reporting_draw_table($table,$data_array){
 
 		$colname = $table;
 		$data = "
-	      google.load('visualization', '1.1', {'packages':['controls', 'corechart','table']});
+				var data;
+	      google.load('visualization', '1.1', {'packages':['controls', 'corechart','table','treemap','geochart']});
 	      google.setOnLoadCallback(drawChart);
-	
+
 	      function drawChart() {
 		      // Create the data table.
-		      var data = new google.visualization.DataTable();";
+		      data = new google.visualization.DataTable();";
 		      // Adds names of columns by looking at keys of first row
+
+		      $chart_types = array();
 					foreach ($data_array as $arr => $arr2){
 			      foreach ($arr2 as $keys => $values){
 		      		foreach ($values as $key => $value){
+		      			$chart_types[$key] = reporting_get_chart_type($key);
 		      			$data .= "data.addColumn('string', '" . $key . "');";
 		      		}
 			      }
@@ -768,17 +777,16 @@ function reporting_draw_table($table,$data_array){
 		      			reset($rows);
 		      			$data .= trim(preg_replace('/\s\s+|&nbsp;/', ' ', strip_tags(addslashes($value))));
 		      			end($rows);
-		      			if ($key !== key($rows)){
+		      			if ($key !== key($rows)){ // if not last key
 		      				$data .=  "', '";
 		      			}
 		      		}
 				      $data .=  "']);"; 
-
 			      }
 			    }
-		     
+
 	      	$data .= "
-	        // Define a StringFilter control for the 'Email' column
+	        // Define a StringFilter control for the 'Name' column
 	        var stringFilterEmail = new google.visualization.ControlWrapper({
 	          'controlType': 'StringFilter',
 	          'containerId': 'filterName',
@@ -786,7 +794,7 @@ function reporting_draw_table($table,$data_array){
 	            'filterColumnLabel': 'name'
 	          }
 	        });
-					// Define a StringFilter control for the 'Name' column
+					// Define a StringFilter control for the 'Email' column
 	        var stringFilterUser = new google.visualization.ControlWrapper({
 	          'controlType': 'StringFilter',
 	          'containerId': 'filterEmail',
@@ -794,30 +802,62 @@ function reporting_draw_table($table,$data_array){
 	            'filterColumnLabel': 'mail'
 	          }
 	        });
-	      
+					
+					var charts = new Array();
+
+					// Loop through field_... columns from data to create chart
+	      	for (var i = 3; i < data.getNumberOfColumns(); i++){
+	      		
+	      		// Result = new table with the count of the keys of a column
+	      		var result = google.visualization.data.group(data,
+					  [{'column': i, 'aggregation': google.visualization.data.count, 'type': 'number'}],
+					  [{'column': i, 'aggregation': google.visualization.data.count, 'type': 'number'}]
+						);
+
+	        	// Add each chart as a div tag in html
+						jQuery('#dashboard').append('<div id=' + result.getColumnLabel(0) + '></div>');
+
+						var col = " . json_encode($chart_types) .";
+						var ch =  col[result.getColumnLabel(0)];
+						console.log(ch[result.getColumnLabel(0)]);
+						// Create the chart 
+						var chart = new google.visualization[ch](document.getElementById(result.getColumnLabel(0)));
+						//charts.push(chart);
+						chart.draw(result,
+								{title: result.getColumnLabel(0),
+								width:600, height:400,
+								vAxis: {title: result.getColumnLabel(0)},
+								hAxis: {title: 'Count'}
+								}
+	        		);						
+					}
+
 	        // Define a table visualization
-	        var table = new google.visualization.ChartWrapper({
+	        charts.push(new google.visualization.ChartWrapper({
 	          'chartType': 'Table',
-	          'containerId': " .$table2 . ",
-	          'options': {'title':'".$table.":',
+	          'containerId': '" .$table . "',
+	          'options': {'title':'".$table."',
 	                       'width':1050,
 	                       'height':300,
-	                       is3D: false}
-	        });
-	      
-	        // Create the dashboard.
+	                       'is3D': false}
+	        }));
+
 	        var dashboard = new google.visualization.Dashboard(document.getElementById('dashboard')).
 	          // Configure the string filter to affect the table contents
-	          bind([stringFilterEmail,stringFilterUser], table).
+	          bind([stringFilterEmail,stringFilterUser], charts).
 	          // Draw the dashboard
 	          draw(data);
 	      }
 		";
 		drupal_add_js($data, array('type' => 'inline', 'scope' => 'header', 'weight' => 5));
 
-		$output .= '<div id="dashboard"><div id="filterEmail"></div><div id="filterName"></div><div id="'.$table2 .'"></div></div>';
+
+		$output .= '<div id="dashboard">
+									<div id="filterEmail"></div>
+									<div id="filterName"></div>
+									<div id="'.$table .'"></div>
+								</div>';
 	}
-	//print_r($ff);
 	
 	return $output;
 }
