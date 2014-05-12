@@ -123,7 +123,7 @@ function reporting_all(){
 	  array_push($user_array, array($value));   
 	}
 
-	$display .= "Number of profile fields: " . count($user_array) . "<br/>";
+	$display .= "Total number of profile fields: " . count($user_array) . "<br/>";
   $display .= reporting_draw_table('Reporting',$user_array);
 
 	$display .= "<br/><br/>";
@@ -287,7 +287,7 @@ function reporting_get_fields(){
 
 function reporting_get_table_fields(){
 	$user_fields = db_select('users', 'u');
-	$user_fields->fields('u', array('uid','name','mail'));
+	$user_fields->fields('u', array('uid','name','mail','created'));
 	// Joins any tables selected from config with uid from users table
 	foreach (array_filter(variable_get('reporting', array())) as $t){
 		$user_fields->leftJoin('field_data_' . $t, $t, $t .'.entity_id = u.uid');
@@ -763,7 +763,11 @@ function reporting_draw_table($table,$data_array){
 			      foreach ($arr2 as $keys => $values){
 		      		foreach ($values as $key => $value){
 		      			$chart_types[$key] = reporting_get_chart_type($key);
-		      			$data .= "data.addColumn('string', '" . $key . "');";
+		      			if ($key == "created"){
+									$data .= "data.addColumn('date', '" . $key . "');";
+		      			} else {
+		      				$data .= "data.addColumn('string', '" . $key . "');";
+		      			}		
 		      		}
 			      }
 			      break;
@@ -775,15 +779,25 @@ function reporting_draw_table($table,$data_array){
 		      		$data .= "data.addRow(['";
 		      		foreach ($rows as $key => $value){ 
 		      			reset($rows);
-		      			$data .= trim(preg_replace('/\s\s+|&nbsp;/', ' ', strip_tags(addslashes($value))));
-		      			end($rows);
-		      			if ($key !== key($rows)){ // if not last key
-		      				$data .=  "', '";
+		      			if ($key == "created"){
+		      				$data = substr_replace($data ,"",-1); //remove previous quotation mark
+		      				$timeStamp = date("Y,m,d",$value);
+		      				$data .= "new Date(" . $timeStamp . ")";
+		      			} else {
+									$data .= trim(preg_replace('/\s\s+|&nbsp;/', ' ', strip_tags(addslashes($value))));
 		      			}
+		      			end($rows);
+		      			if ($key == "created"){
+									$data .=  ",'";
+		      			}else if ($key !== key($rows)){ // if not last key
+		      				$data .=  "','";
+		      			} 
 		      		}
 				      $data .=  "']);"; 
 			      }
 			    }
+
+
 
 	      	$data .= "
 	        // Define a StringFilter control for the 'Name' column
@@ -802,12 +816,23 @@ function reporting_draw_table($table,$data_array){
 	            'filterColumnLabel': 'mail'
 	          }
 	        });
-					
+
+				  // Define a DateRangeFilter slider control for date created column
+				  var dateSlider = new google.visualization.ControlWrapper({
+				    'controlType': 'DateRangeFilter',
+				    'containerId': 'filterDate',
+				    'options': {
+				      'filterColumnLabel': 'created',
+				      'ui' : { 'format': { 'pattern' : 'MMM-d-yy'}}
+				    }
+				  });
+									
+					var columnPickers = new Array();
 					var charts = new Array();
 
 					// Loop through field_... columns from data to create chart
 	      	for (var i = 3; i < data.getNumberOfColumns(); i++){
-	      		
+
 	      		// Result = new table with the count of the keys of a column
 	      		var result = google.visualization.data.group(data,
 					  [{'column': i, 'aggregation': google.visualization.data.count, 'type': 'number'}],
@@ -818,33 +843,63 @@ function reporting_draw_table($table,$data_array){
 						jQuery('#dashboard').append('<div id=' + result.getColumnLabel(0) + '></div>');
 
 						var col = " . json_encode($chart_types) .";
-						var ch =  col[result.getColumnLabel(0)];
-						console.log(ch[result.getColumnLabel(0)]);
+						var ch =  col[result.getColumnLabel(0)]; // chart type
+
+						// Don't create chart for 'created' because invalid type 
+				 		if (result.getColumnLabel(0) == 'created'){
+	      			continue;
+	      		}
+
+						jQuery('#filterColumn').append('<div id=picker-' + result.getColumnLabel(0) + '></div>');
+					  // Define a category picker control for column
+					  var columnPicker = new google.visualization.ControlWrapper({
+					    'controlType': 'CategoryFilter',
+					    'containerId': 'picker-' + result.getColumnLabel(0),
+					    'options': {
+					      'filterColumnLabel': result.getColumnLabel(0),
+					      'ui': {
+					      'labelStacking': 'horizontal',
+					        'allowTyping': false,
+					        'allowMultiple': true
+					      }
+					    }
+					  });
+						columnPickers.push(columnPicker);
+
+
+
 						// Create the chart 
 						var chart = new google.visualization[ch](document.getElementById(result.getColumnLabel(0)));
-						//charts.push(chart);
-						chart.draw(result,
-								{title: result.getColumnLabel(0),
+						
+						var options = {
+								title: result.getColumnLabel(0),
 								width:600, height:400,
 								vAxis: {title: result.getColumnLabel(0)},
 								hAxis: {title: 'Count'}
-								}
-	        		);						
+						};
+						chart.draw(result, options);	
 					}
 
 	        // Define a table visualization
-	        charts.push(new google.visualization.ChartWrapper({
+	        var table = new google.visualization.ChartWrapper({
 	          'chartType': 'Table',
 	          'containerId': '" .$table . "',
 	          'options': {'title':'".$table."',
-	                       'width':1050,
+	                       'width':1100,
 	                       'height':300,
 	                       'is3D': false}
-	        }));
+	        });				
+					charts.push(table);
+
+					var filters = new Array();
+					filters.push(stringFilterEmail);
+					filters.push(stringFilterUser);
+					filters.push(dateSlider);
+					filters.push.apply(filters, columnPickers);
 
 	        var dashboard = new google.visualization.Dashboard(document.getElementById('dashboard')).
 	          // Configure the string filter to affect the table contents
-	          bind([stringFilterEmail,stringFilterUser], charts).
+	          bind(filters, charts).
 	          // Draw the dashboard
 	          draw(data);
 	      }
@@ -855,6 +910,9 @@ function reporting_draw_table($table,$data_array){
 		$output .= '<div id="dashboard">
 									<div id="filterEmail"></div>
 									<div id="filterName"></div>
+									<div id="filterDate"></div>
+									<div id="filterColumn"></div>
+									<div id="table-count"></div>
 									<div id="'.$table .'"></div>
 								</div>';
 	}
